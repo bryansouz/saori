@@ -21,10 +21,14 @@ print(f"Streamlit version: {st.__version__}")
 load_dotenv()
 print("Variáveis de ambiente carregadas")
 
-# Configurar a API key do OpenAI
-api_key = os.getenv("OPENAI_API_KEY")
-if api_key:
-    openai.api_key = api_key
+# Inicializar estados da sessão para a chave API
+if "openai_api_key" not in st.session_state:
+    st.session_state.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+    print(f"API key encontrada no .env: {'Sim' if st.session_state.openai_api_key else 'Não'}")
+
+# Configurar a API key do OpenAI a partir da sessão (será atualizada pela interface se necessário)
+if st.session_state.openai_api_key:
+    openai.api_key = st.session_state.openai_api_key
     print("API key configurada")
 else:
     print("AVISO: API key não encontrada!")
@@ -39,31 +43,65 @@ st.set_page_config(
 def get_completion(messages, model="gpt-3.5-turbo"):
     """
     Obter resposta do modelo OpenAI usando a nova sintaxe
+    
+    Args:
+        messages: Lista de mensagens no formato esperado pela API
+        model: Modelo OpenAI a ser usado
+        
+    Returns:
+        Texto da resposta do modelo
     """
     try:
-        # Usar a nova sintaxe do cliente OpenAI
-        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.7,
-        )
-        return response.choices[0].message.content
-    except AttributeError:
-        # Fallback para a sintaxe mais antiga
+        # Certificar-se de que a API key está configurada
+        if not st.session_state.openai_api_key:
+            return "⚠️ API key não configurada! Por favor, configure a chave da API OpenAI."
+            
+        # Usar a chave API da sessão
+        openai.api_key = st.session_state.openai_api_key
+        
         response = openai.ChatCompletion.create(
             model=model,
             messages=messages,
             temperature=0.7,
         )
         return response.choices[0].message["content"]
+    except Exception as e:
+        return f"Erro ao comunicar com a API OpenAI: {str(e)}"
 
 def main():
-    # Verificar se a API key está configurada
-    if not os.getenv("OPENAI_API_KEY"):
+    # Interface para inserir a chave API se não estiver configurada
+    api_key_configured = st.session_state.openai_api_key != ""
+    
+    if not api_key_configured:
         st.error("⚠️ Chave da API OpenAI não configurada!")
-        st.info("Para configurar a chave API:\n1. Crie um arquivo `.env` na pasta raiz do projeto\n2. Adicione a linha: `OPENAI_API_KEY=sua-chave-aqui`\n3. Reinicie a aplicação")
-        st.stop()  # Interrompe a execução se não tiver chave API
+        
+        # Criar um formulário para a chave API
+        with st.form("api_key_form"):
+            api_key = st.text_input("Chave da API OpenAI:", 
+                                    type="password", 
+                                    help="Insira sua chave API da OpenAI (começa com 'sk-')")
+            
+            submit = st.form_submit_button("Salvar Chave API")
+            
+            if submit and api_key:
+                # Salvar a chave API na sessão
+                st.session_state.openai_api_key = api_key
+                # Atualizar configuração da OpenAI
+                openai.api_key = api_key
+                st.success("✅ Chave API configurada com sucesso!")
+                st.experimental_rerun()
+            elif submit:
+                st.warning("Por favor, insira uma chave API válida")
+        
+        # Mostrar instruções alternativas para usar arquivo .env
+        st.info("Alternativamente, você pode configurar a chave API:\n"
+                "1. Crie um arquivo `.env` na pasta raiz do projeto\n"
+                "2. Adicione a linha: `OPENAI_API_KEY=sua-chave-aqui`\n"
+                "3. Reinicie a aplicação")
+        
+        # Parar a execução até que a chave esteja configurada
+        if not st.session_state.openai_api_key:
+            st.stop()
     
     # Título
     st.title("Saori Intelligence")
@@ -92,6 +130,22 @@ def main():
     # Barra lateral para configurações
     with st.sidebar:
         st.header("Configurações")
+        
+        # Opção para reconfigurar a chave API
+        if st.expander("Configuração da API"):
+            current_key_masked = "•" * 20 + st.session_state.openai_api_key[-5:] if len(st.session_state.openai_api_key) > 5 else ""
+            st.text(f"Chave atual: {current_key_masked}")
+            
+            # Formulário para alterar a chave
+            with st.form("update_api_key"):
+                new_key = st.text_input("Nova chave API:", type="password")
+                update_key = st.form_submit_button("Atualizar")
+                
+                if update_key and new_key:
+                    st.session_state.openai_api_key = new_key
+                    openai.api_key = new_key
+                    st.success("Chave atualizada!")
+                    st.experimental_rerun()
         
         # Botões para alternar entre guias
         tab_col1, tab_col2, tab_col3 = st.columns(3)

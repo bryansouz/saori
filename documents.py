@@ -218,18 +218,8 @@ class DocumentProcessor:
                 return False, f"Arquivo do documento não encontrado: {doc_file}"
             
             # Extrair texto do documento
-            file_ext = os.path.splitext(doc_file)[1].lower()
-            text = ""
-            
             try:
-                if file_ext == '.pdf':
-                    text = self._extract_text_from_pdf(doc_file)
-                elif file_ext == '.docx':
-                    text = self._extract_text_from_docx(doc_file)
-                elif file_ext in ['.txt', '.md']:
-                    text = self._extract_text_from_txt(doc_file)
-                else:
-                    return False, f"Formato de arquivo não suportado: {file_ext}"
+                text = self._extract_text_from_file(doc_file)
             except Exception as e:
                 return False, f"Erro ao extrair texto: {str(e)}"
             
