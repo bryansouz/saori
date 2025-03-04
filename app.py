@@ -11,11 +11,23 @@ import documents
 # Importar prompts
 from prompts import SYSTEM_PROMPT, TEST_MODE_PROMPT
 
+# Log para diagnóstico
+print("Inicializando aplicação...")
+print(f"Python version: {os.sys.version}")
+print(f"OpenAI version: {openai.__version__}")
+print(f"Streamlit version: {st.__version__}")
+
 # Carregar variáveis de ambiente do arquivo .env
 load_dotenv()
+print("Variáveis de ambiente carregadas")
 
 # Configurar a API key do OpenAI
-openai.api_key = os.getenv("OPENAI_API_KEY")
+api_key = os.getenv("OPENAI_API_KEY")
+if api_key:
+    openai.api_key = api_key
+    print("API key configurada")
+else:
+    print("AVISO: API key não encontrada!")
 
 # Configuração inicial do Streamlit
 st.set_page_config(
@@ -47,6 +59,12 @@ def get_completion(messages, model="gpt-3.5-turbo"):
         return response.choices[0].message["content"]
 
 def main():
+    # Verificar se a API key está configurada
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("⚠️ Chave da API OpenAI não configurada!")
+        st.info("Para configurar a chave API:\n1. Crie um arquivo `.env` na pasta raiz do projeto\n2. Adicione a linha: `OPENAI_API_KEY=sua-chave-aqui`\n3. Reinicie a aplicação")
+        st.stop()  # Interrompe a execução se não tiver chave API
+    
     # Título
     st.title("Saori Intelligence")
     st.caption("Eagle")
@@ -639,4 +657,15 @@ def show_debug_interface():
                             st.error(f"Erro ao limpar sistema: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    try:
+        print("Iniciando aplicação Saori...")
+        main()
+        print("Aplicação iniciada com sucesso!")
+    except Exception as e:
+        print(f"ERRO AO INICIAR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Mostrar erro no Streamlit também
+        st.error(f"Erro ao iniciar a aplicação: {str(e)}")
+        st.code(traceback.format_exc())

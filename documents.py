@@ -8,13 +8,19 @@ import numpy as np
 
 # Tente importar as bibliotecas para manipulação de documentos
 # Se não estiverem disponíveis, o sistema mostrará mensagens de erro apropriadas
+PYMUPDF_AVAILABLE = False
+PYTHON_DOCX_AVAILABLE = False
+LANGCHAIN_AVAILABLE = False
+
+print("Verificando dependências disponíveis...")
+
 try:
     import fitz  # PyMuPDF para PDFs
     PYMUPDF_AVAILABLE = True
     print("PyMuPDF está disponível")
 except ImportError:
     PYMUPDF_AVAILABLE = False
-    print("PyMuPDF NÃO está disponível - instale com 'pip install pymupdf'")
+    print("PyMuPDF NÃO está disponível - PDF não será suportado")
 
 try:
     import docx
@@ -22,7 +28,7 @@ try:
     print("python-docx está disponível")
 except ImportError:
     PYTHON_DOCX_AVAILABLE = False
-    print("python-docx NÃO está disponível - instale com 'pip install python-docx'")
+    print("python-docx NÃO está disponível - DOCX não será suportado")
 
 try:
     from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -30,7 +36,7 @@ try:
     print("LangChain está disponível")
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    print("LangChain NÃO está disponível - instale com 'pip install langchain langchain-text-splitters'")
+    print("LangChain NÃO está disponível - usando método básico de divisão de texto")
 
 # Diretório onde os documentos serão armazenados
 DOCUMENTS_DIR = "documents"
