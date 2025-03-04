@@ -1,42 +1,29 @@
 import os
 import json
-import hashlib
-from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
-import traceback
+import pickle
+import datetime
+import time
+from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
+import hashlib
+import traceback
 
-# Tente importar as bibliotecas para manipulação de documentos
-# Se não estiverem disponíveis, o sistema mostrará mensagens de erro apropriadas
-PYMUPDF_AVAILABLE = False
-PYTHON_DOCX_AVAILABLE = False
-LANGCHAIN_AVAILABLE = False
-
-print("Verificando dependências disponíveis...")
+# Remover a dependência do LangChain
+LANGCHAIN_AVAILABLE = False  # Sempre definido como falso para usar nossa própria implementação
 
 try:
-    import fitz  # PyMuPDF para PDFs
+    import fitz  # PyMuPDF
     PYMUPDF_AVAILABLE = True
-    print("PyMuPDF está disponível")
 except ImportError:
+    print("PyMuPDF não está disponível. Não será possível processar PDFs.")
     PYMUPDF_AVAILABLE = False
-    print("PyMuPDF NÃO está disponível - PDF não será suportado")
 
 try:
     import docx
-    PYTHON_DOCX_AVAILABLE = True
-    print("python-docx está disponível")
+    DOCX_AVAILABLE = True
 except ImportError:
-    PYTHON_DOCX_AVAILABLE = False
-    print("python-docx NÃO está disponível - DOCX não será suportado")
-
-try:
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    LANGCHAIN_AVAILABLE = True
-    print("LangChain está disponível")
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    print("LangChain NÃO está disponível - usando método básico de divisão de texto")
+    print("python-docx não está disponível. Não será possível processar arquivos DOCX.")
+    DOCX_AVAILABLE = False
 
 # Diretório onde os documentos serão armazenados
 DOCUMENTS_DIR = "documents"
@@ -102,7 +89,7 @@ class DocumentProcessor:
         if file_ext == '.pdf' and not PYMUPDF_AVAILABLE:
             raise ImportError("PyMuPDF (fitz) é necessário para processar PDFs. Instale com: pip install pymupdf")
         
-        if file_ext == '.docx' and not PYTHON_DOCX_AVAILABLE:
+        if file_ext == '.docx' and not DOCX_AVAILABLE:
             raise ImportError("python-docx é necessário para processar arquivos DOCX. Instale com: pip install python-docx")
         
         # Criar ID único com base no conteúdo e nome do arquivo
@@ -119,7 +106,7 @@ class DocumentProcessor:
             dst.write(src.read())
             
         # Extrair texto do documento
-        text = self._extract_text_from_file(dest_path, file_ext)
+        text = self._extract_text_from_file(dest_path)
         
         # Processar e segmentar o texto
         chunks = self._split_text(text, doc_id)
@@ -138,7 +125,7 @@ class DocumentProcessor:
             "filename": dest_filename,
             "original_filename": os.path.basename(file_path),
             "file_type": file_ext[1:],  # remover o ponto
-            "added_date": datetime.now().isoformat(),
+            "added_date": datetime.datetime.now().isoformat(),
             "num_chunks": len(chunks)
         }
         
@@ -296,89 +283,53 @@ class DocumentProcessor:
             traceback.print_exc()
             return False, error_msg
     
-    def _extract_text_from_file(self, file_path: str, file_ext: str) -> str:
+    def _extract_text_from_file(self, file_path: str) -> str:
         """
-        Extrai texto de um arquivo baseado na extensão.
+        Extrai texto de um arquivo baseado em sua extensão
         
         Args:
-            file_path: Caminho do arquivo
-            file_ext: Extensão do arquivo
+            file_path: Caminho para o arquivo
             
         Returns:
-            Texto extraído do documento
+            Texto extraído do arquivo
         """
-        if file_ext == '.pdf':
-            return self._extract_text_from_pdf(file_path)
-        elif file_ext == '.docx':
-            return self._extract_text_from_docx(file_path)
-        elif file_ext in ['.txt', '.md']:
-            with open(file_path, 'r', encoding='utf-8') as f:
+        _, file_ext = os.path.splitext(file_path)
+        file_ext = file_ext.lower()
+        
+        if file_ext == '.txt':
+            # Para arquivos de texto, apenas lê o conteúdo
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read()
+            
+        elif file_ext == '.pdf' and PYMUPDF_AVAILABLE:
+            # Para PDFs, usa PyMuPDF
+            text = ""
+            try:
+                doc = fitz.open(file_path)
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    text += page.get_text()
+                doc.close()
+                return text
+            except Exception as e:
+                print(f"Erro ao processar PDF: {str(e)}")
+                return f"ERRO AO PROCESSAR PDF: {str(e)}"
+            
+        elif file_ext == '.docx' and DOCX_AVAILABLE:
+            # Para arquivos DOCX, usa python-docx
+            text = ""
+            try:
+                doc = docx.Document(file_path)
+                for para in doc.paragraphs:
+                    text += para.text + "\n"
+                return text
+            except Exception as e:
+                print(f"Erro ao processar DOCX: {str(e)}")
+                return f"ERRO AO PROCESSAR DOCX: {str(e)}"
+            
         else:
-            raise ValueError(f"Formato de arquivo não suportado: {file_ext}")
-    
-    def _extract_text_from_pdf(self, file_path: str) -> str:
-        """Extrai texto de um arquivo PDF usando PyMuPDF."""
-        text = ""
-        try:
-            # Importar o módulo novamente aqui para garantir que está disponível
-            import fitz
-            
-            # Verificar se o arquivo existe
-            if not os.path.exists(file_path):
-                print(f"Erro: O arquivo {file_path} não existe")
-                return "Erro: Arquivo não encontrado"
-            
-            # Verificar o tamanho do arquivo
-            file_size = os.path.getsize(file_path)
-            print(f"Tamanho do arquivo PDF: {file_size} bytes")
-            
-            if file_size == 0:
-                print("Erro: Arquivo PDF vazio")
-                return "Erro: Arquivo PDF vazio"
-                
-            # Abordagem mais direta e robusta para abrir PDFs
-            print(f"Tentando abrir PDF: {file_path}")
-            doc = fitz.open(file_path)
-            
-            # Extrair texto
-            print(f"PDF aberto com {len(doc)} páginas")
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                page_text = page.get_text()
-                text += page_text + "\n\n"
-                print(f"Página {page_num+1}: {len(page_text)} caracteres")
-            
-            # Fechar o documento
-            doc.close()
-            
-            # Verificar se conseguimos extrair algum texto
-            if not text.strip():
-                print("Aviso: Nenhum texto extraível encontrado no PDF")
-                return "Este documento parece não conter texto extraível."
-                
-            print(f"Total de texto extraído: {len(text)} caracteres")
-            return text
-            
-        except Exception as e:
-            import traceback
-            error_text = f"Erro ao extrair texto do PDF: {str(e)}"
-            print(error_text)
-            traceback.print_exc()
-            # Retornar um texto de erro em vez de string vazia para ser mais informativo
-            return f"Erro ao processar PDF: {str(e)}"
-
-    def _extract_text_from_docx(self, file_path: str) -> str:
-        """Extrai texto de um arquivo DOCX usando python-docx."""
-        text = ""
-        try:
-            doc = docx.Document(file_path)
-            for para in doc.paragraphs:
-                text += para.text + "\n"
-            return text
-        except Exception as e:
-            print(f"Erro ao extrair texto do DOCX {file_path}: {e}")
-            return ""
+            # Para outros tipos de arquivo, retorna uma mensagem
+            return f"Tipo de arquivo não suportado: {file_ext}"
     
     def _split_text(self, text: str, doc_id: str) -> List[Dict[str, Any]]:
         """
@@ -394,31 +345,7 @@ class DocumentProcessor:
         chunks = []
         chunk_id = 1
         
-        if LANGCHAIN_AVAILABLE:
-            # Usar o LangChain se disponível
-            try:
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200,
-                    separators=["\n\n", "\n", ". ", " ", ""]
-                )
-                texts = text_splitter.split_text(text)
-                
-                for i, chunk_text in enumerate(texts):
-                    chunk = {
-                        "id": f"{doc_id}_chunk_{i+1}",
-                        "doc_id": doc_id,
-                        "text": chunk_text,
-                        "embedding": None
-                    }
-                    chunks.append(chunk)
-                
-                return chunks
-            except Exception as e:
-                print(f"Erro ao usar LangChain para divisão de texto: {str(e)}")
-                print("Usando método alternativo de divisão...")
-        
-        # Método alternativo simples de divisão de texto (usado quando LangChain não está disponível)
+        # Método alternativo simples de divisão de texto
         # Dividir por parágrafos e depois combinar para chunks de tamanho aproximado
         paragraphs = text.split("\n\n")
         current_chunk = ""
@@ -737,7 +664,7 @@ def rebuild_document_index() -> bool:
                     "filename": doc_filename,
                     "original_filename": doc_filename,
                     "file_type": file_ext[1:],  # remover o ponto
-                    "added_date": datetime.now().isoformat(),
+                    "added_date": datetime.datetime.now().isoformat(),
                     "num_chunks": num_chunks
                 }
         
