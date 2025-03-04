@@ -391,92 +391,64 @@ class DocumentProcessor:
         Returns:
             Lista de chunks processados
         """
-        if not text:
-            return []
-            
+        chunks = []
+        chunk_id = 1
+        
         if LANGCHAIN_AVAILABLE:
-            # Usar LangChain para dividir o texto de forma inteligente
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=4000,
-                chunk_overlap=400,
-                separators=["\n\n", "\n", ". ", " ", ""],
-                length_function=len
-            )
-            
-            # Dividir o texto em chunks
-            texts = splitter.split_text(text)
-            
-            # Construir a lista de chunks com metadados
-            result = []
-            for i, chunk_text in enumerate(texts):
-                # Gerar embedding para o chunk
-                try:
-                    print(f"Gerando embedding para chunk {i+1}/{len(texts)} do documento {doc_id}")
-                    embedding = generate_embedding(chunk_text)
-                except Exception as e:
-                    print(f"Erro ao gerar embedding para chunk {i+1}: {str(e)}")
-                    embedding = []
+            # Usar o LangChain se disponível
+            try:
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    separators=["\n\n", "\n", ". ", " ", ""]
+                )
+                texts = text_splitter.split_text(text)
                 
-                chunk = {
-                    "id": f"{doc_id}_{i}",
-                    "doc_id": doc_id,
-                    "chunk_index": i,
-                    "text": chunk_text,
-                    "embedding": embedding,
-                    "length": len(chunk_text)
-                }
-                result.append(chunk)
+                for i, chunk_text in enumerate(texts):
+                    chunk = {
+                        "id": f"{doc_id}_chunk_{i+1}",
+                        "doc_id": doc_id,
+                        "text": chunk_text,
+                        "embedding": None
+                    }
+                    chunks.append(chunk)
                 
-            return result
-        else:
-            # Fallback simples se LangChain não estiver disponível
-            max_chunk_size = 4000
-            overlap = 400
-            
-            chunks = []
-            i = 0
-            chunk_index = 0
-            
-            while i < len(text):
-                # Obter o chunk atual
-                chunk_end = min(i + max_chunk_size, len(text))
-                
-                # Se não estamos no fim do texto, ajustar para evitar quebrar palavras
-                if chunk_end < len(text):
-                    # Procurar o último espaço antes do limite
-                    last_space = text.rfind(" ", i, chunk_end)
-                    if last_space != -1:
-                        chunk_end = last_space + 1
-                
-                chunk_text = text[i:chunk_end]
-                
-                # Gerar embedding para o chunk
-                try:
-                    print(f"Gerando embedding para chunk {chunk_index+1} do documento {doc_id}")
-                    embedding = generate_embedding(chunk_text)
-                except Exception as e:
-                    print(f"Erro ao gerar embedding para chunk {chunk_index+1}: {str(e)}")
-                    embedding = []
-                
-                # Criar o objeto de chunk
-                chunk = {
-                    "id": f"{doc_id}_{chunk_index}",
-                    "doc_id": doc_id,
-                    "chunk_index": chunk_index,
-                    "text": chunk_text,
-                    "embedding": embedding,
-                    "length": len(chunk_text)
-                }
-                chunks.append(chunk)
-                
-                # Avançar para o próximo chunk, considerando a sobreposição
-                i = chunk_end - overlap
-                if i < 0:
-                    i = 0
-                
-                chunk_index += 1
-            
-            return chunks
+                return chunks
+            except Exception as e:
+                print(f"Erro ao usar LangChain para divisão de texto: {str(e)}")
+                print("Usando método alternativo de divisão...")
+        
+        # Método alternativo simples de divisão de texto (usado quando LangChain não está disponível)
+        # Dividir por parágrafos e depois combinar para chunks de tamanho aproximado
+        paragraphs = text.split("\n\n")
+        current_chunk = ""
+        
+        for para in paragraphs:
+            if len(current_chunk) + len(para) < 1000:
+                current_chunk += para + "\n\n"
+            else:
+                if current_chunk:
+                    chunk = {
+                        "id": f"{doc_id}_chunk_{chunk_id}",
+                        "doc_id": doc_id,
+                        "text": current_chunk.strip(),
+                        "embedding": None
+                    }
+                    chunks.append(chunk)
+                    chunk_id += 1
+                current_chunk = para + "\n\n"
+        
+        # Adicionar o último chunk se houver conteúdo
+        if current_chunk:
+            chunk = {
+                "id": f"{doc_id}_chunk_{chunk_id}",
+                "doc_id": doc_id,
+                "text": current_chunk.strip(),
+                "embedding": None
+            }
+            chunks.append(chunk)
+        
+        return chunks
     
     def _save_chunks(self, chunks: List[Dict[str, Any]], doc_id: str) -> None:
         """
@@ -852,29 +824,50 @@ def generate_embedding(text: str) -> List[float]:
         text: Texto para gerar embedding
         
     Returns:
-        Lista de floats representando o embedding
+        Lista de floats representando o embedding ou lista vazia em caso de erro
     """
-    import openai
+    if not text.strip():
+        print("Texto vazio, retornando embedding vazio")
+        return []
     
-    try:
-        # Versão mais nova da API
-        client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
-        )
-        return response.data[0].embedding
-    except AttributeError:
-        # Fallback para versão antiga
-        response = openai.Embedding.create(
-            model="text-embedding-3-small",
-            input=text
-        )
-        return response["data"][0]["embedding"]
-    except Exception as e:
-        print(f"Erro ao gerar embedding: {str(e)}")
-        # Retornar um embedding vazio em caso de erro
-        return [0.0] * 1536  # Modelo text-embedding-3-small usa 1536 dimensões
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Importa openai aqui para não quebrar na importação inicial
+            import openai
+            from openai import OpenAI
+            
+            # Tenta usar a nova sintaxe primeiro
+            try:
+                # Verificar se a chave API está configurada
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    print("AVISO: OPENAI_API_KEY não está configurada")
+                    return []
+                
+                client = OpenAI(api_key=api_key)
+                response = client.embeddings.create(
+                    input=text,
+                    model="text-embedding-ada-002"
+                )
+                return response.data[0].embedding
+            except (AttributeError, ImportError):
+                # Fallback para a sintaxe antiga
+                response = openai.Embedding.create(
+                    input=text,
+                    model="text-embedding-ada-002"
+                )
+                return response["data"][0]["embedding"]
+        except Exception as e:
+            retry_count += 1
+            print(f"Erro ao gerar embedding (tentativa {retry_count}/{max_retries}): {str(e)}")
+            import time
+            time.sleep(1)  # Esperar um pouco antes de tentar novamente
+    
+    print("Falha em todas as tentativas de gerar embedding. Retornando lista vazia.")
+    return []
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
     """
