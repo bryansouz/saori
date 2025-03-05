@@ -341,7 +341,7 @@ def show_chat_interface():
                 api_messages.insert(0, {"role": "system", "content": system_content})
                 
                 # Obter resposta
-                response = get_completion(api_messages, model="gpt-3.5-turbo")
+                response = get_completion(api_messages, model="gpt-4")
                 
                 # Adicionar resposta ao histórico
                 st.session_state.messages.append({"role": "assistant", "content": response})
