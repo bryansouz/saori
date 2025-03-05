@@ -8,8 +8,21 @@ import numpy as np
 import hashlib
 import traceback
 
-# Remover a dependência do LangChain
-LANGCHAIN_AVAILABLE = False  # Sempre definido como falso para usar nossa própria implementação
+# Configurar a disponibilidade do LangChain
+LANGCHAIN_AVAILABLE = False
+try:
+    import langchain
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_openai import OpenAIEmbeddings
+    from langchain_community.vectorstores import FAISS
+    from langchain_community.document_loaders import TextLoader, PyMuPDFLoader, Docx2txtLoader
+    from langchain_core.documents import Document  # Importação corrigida
+    LANGCHAIN_AVAILABLE = True
+    print("LangChain disponível e será usado para processamento de documentos")
+except ImportError as e:
+    print(f"LangChain não está disponível: {e}")
+    print("Usando implementação própria para processamento de documentos")
+    LANGCHAIN_AVAILABLE = False
 
 try:
     import fitz  # PyMuPDF
@@ -275,7 +288,7 @@ class DocumentProcessor:
     
     def _extract_text_from_file(self, file_path: str) -> str:
         """
-        Extrai texto de um arquivo baseado em sua extensão
+        Extrai o texto de um arquivo de acordo com seu tipo.
         
         Args:
             file_path: Caminho para o arquivo
@@ -283,28 +296,68 @@ class DocumentProcessor:
         Returns:
             Texto extraído do arquivo
         """
-        _, file_ext = os.path.splitext(file_path)
-        file_ext = file_ext.lower()
+        # Verificar se o arquivo existe
+        if not os.path.exists(file_path):
+            return f"ERRO: Arquivo não encontrado: {file_path}"
         
-        if file_ext == '.txt':
-            # Para arquivos de texto, apenas lê o conteúdo
-            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                return f.read()
+        # Usar LangChain se disponível
+        if LANGCHAIN_AVAILABLE:
+            try:
+                print(f"Usando LangChain para extrair texto de {file_path}")
+                file_ext = os.path.splitext(file_path)[1].lower()
+                
+                if file_ext == '.pdf':
+                    loader = PyMuPDFLoader(file_path)
+                    documents = loader.load()
+                    return "\n\n".join([doc.page_content for doc in documents])
+                
+                elif file_ext == '.docx':
+                    loader = Docx2txtLoader(file_path)
+                    documents = loader.load()
+                    return "\n\n".join([doc.page_content for doc in documents])
+                
+                elif file_ext == '.txt' or file_ext == '.md':
+                    loader = TextLoader(file_path, encoding='utf-8')
+                    documents = loader.load()
+                    return "\n\n".join([doc.page_content for doc in documents])
+                
+                else:
+                    print(f"LangChain: Tipo de arquivo não suportado: {file_ext}")
+                    # Fallback para método padrão
             
-        elif file_ext == '.pdf' and PYMUPDF_AVAILABLE:
-            # Para PDFs, usa PyMuPDF
+            except Exception as e:
+                print(f"Erro ao usar LangChain para extrair texto: {str(e)}")
+                print("Voltando ao método padrão de extração")
+        
+        # Método padrão se LangChain não estiver disponível ou falhar
+        print(f"Usando método padrão para extrair texto de {file_path}")
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext == '.pdf' and PYMUPDF_AVAILABLE:
+            # Para arquivos PDF, usa PyMuPDF
             text = ""
             try:
-                doc = fitz.open(file_path)
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
-                    text += page.get_text()
-                doc.close()
+                with fitz.open(file_path) as doc:
+                    for page in doc:
+                        text += page.get_text() + "\n\n"
                 return text
             except Exception as e:
                 print(f"Erro ao processar PDF: {str(e)}")
                 return f"ERRO AO PROCESSAR PDF: {str(e)}"
-            
+        
+        elif file_ext == '.txt' or file_ext == '.md':
+            # Para arquivos de texto, lê diretamente
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                # Se falhar com UTF-8, tenta com latin-1
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    return f.read()
+            except Exception as e:
+                print(f"Erro ao ler arquivo de texto: {str(e)}")
+                return f"ERRO AO LER ARQUIVO: {str(e)}"
+        
         elif file_ext == '.docx' and DOCX_AVAILABLE:
             # Para arquivos DOCX, usa python-docx
             text = ""
@@ -332,6 +385,41 @@ class DocumentProcessor:
         Returns:
             Lista de chunks processados
         """
+        if LANGCHAIN_AVAILABLE:
+            # Usar LangChain para dividir o texto
+            try:
+                print(f"Usando LangChain para dividir o texto do documento {doc_id}")
+                # Criar um text splitter com configurações otimizadas
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=100,
+                    length_function=len,
+                    separators=["\n\n", "\n", " ", ""]
+                )
+                
+                # Dividir o texto em chunks
+                langchain_chunks = text_splitter.split_text(text)
+                
+                # Converter para o nosso formato de chunks
+                chunks = []
+                for i, chunk_text in enumerate(langchain_chunks):
+                    chunk = {
+                        "id": f"{doc_id}_chunk_{i+1}",
+                        "doc_id": doc_id,
+                        "text": chunk_text.strip(),
+                        "embedding": None
+                    }
+                    chunks.append(chunk)
+                
+                print(f"LangChain dividiu o texto em {len(chunks)} chunks")
+                return chunks
+            except Exception as e:
+                print(f"Erro ao usar LangChain para dividir texto: {str(e)}")
+                print("Voltando ao método de divisão padrão")
+                # Em caso de erro, voltar ao método padrão
+        
+        # Método padrão se LangChain não estiver disponível ou falhar
+        print(f"Usando método padrão para dividir o texto do documento {doc_id}")
         chunks = []
         chunk_id = 1
         
@@ -365,6 +453,7 @@ class DocumentProcessor:
             }
             chunks.append(chunk)
         
+        print(f"Método padrão dividiu o texto em {len(chunks)} chunks")
         return chunks
     
     def _save_chunks(self, chunks: List[Dict[str, Any]], doc_id: str) -> None:
@@ -434,7 +523,7 @@ class DocumentProcessor:
                         similarity = cosine_similarity(query_embedding, chunk_embedding)
                         
                         # Adicionar à lista de resultados se tiver similaridade mínima
-                        if similarity > 0.1:  # Limiar de similaridade
+                        if similarity > 0.05:  # Reduzido de 0.1 para 0.05 para ser mais permissivo
                             # Adicionar informações do documento ao chunk
                             doc_info = self.documents_index[doc_id].copy()
                             chunk_with_doc = chunk.copy()
@@ -443,12 +532,30 @@ class DocumentProcessor:
                             results.append(chunk_with_doc)
                     else:
                         # Fallback para busca textual se o chunk não tiver embedding
-                        if query in chunk["text"].lower():
+                        chunk_text = chunk["text"].lower()
+                        
+                        # Busca textual mais avançada
+                        # 1. Verificar correspondência exata
+                        if query in chunk_text:
                             doc_info = self.documents_index[doc_id].copy()
                             chunk_with_doc = chunk.copy()
                             chunk_with_doc["document"] = doc_info
-                            chunk_with_doc["similarity"] = 0.5  # Valor médio para correspondências de texto
+                            chunk_with_doc["similarity"] = 0.5  # Valor médio para correspondências de texto exato
                             results.append(chunk_with_doc)
+                        else:
+                            # 2. Verificar correspondência parcial de palavras
+                            query_words = query.split()
+                            matched_words = sum(1 for word in query_words if len(word) > 3 and word in chunk_text)
+                            
+                            # Aceitar correspondências parciais
+                            if matched_words > 0:
+                                similarity_score = 0.3 * (matched_words / len(query_words))
+                                doc_info = self.documents_index[doc_id].copy()
+                                chunk_with_doc = chunk.copy()
+                                chunk_with_doc["document"] = doc_info
+                                chunk_with_doc["similarity"] = similarity_score
+                                results.append(chunk_with_doc)
+                                print(f"Fallback - correspondência parcial: {matched_words}/{len(query_words)} palavras")
             
             # Ordenar por similaridade (maior para menor)
             results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
@@ -464,12 +571,29 @@ class DocumentProcessor:
                 chunks = self.get_document_chunks(doc_id)
                 
                 for chunk in chunks:
-                    if query in chunk["text"].lower():
-                        # Adicionar informações do documento ao chunk
+                    chunk_text = chunk["text"].lower()
+                    
+                    # 1. Verificar correspondência exata
+                    if query in chunk_text:
                         doc_info = self.documents_index[doc_id].copy()
                         chunk_with_doc = chunk.copy()
                         chunk_with_doc["document"] = doc_info
+                        chunk_with_doc["similarity"] = 0.5
                         results.append(chunk_with_doc)
+                    else:
+                        # 2. Verificar correspondência parcial de palavras
+                        query_words = query.split()
+                        matched_words = sum(1 for word in query_words if len(word) > 3 and word in chunk_text)
+                        
+                        # Aceitar correspondências parciais
+                        if matched_words > 0:
+                            similarity_score = 0.3 * (matched_words / len(query_words))
+                            doc_info = self.documents_index[doc_id].copy()
+                            chunk_with_doc = chunk.copy()
+                            chunk_with_doc["document"] = doc_info
+                            chunk_with_doc["similarity"] = similarity_score
+                            results.append(chunk_with_doc)
+                            print(f"Fallback - correspondência parcial: {matched_words}/{len(query_words)} palavras")
         
         # Se não encontramos nenhuma correspondência, pegar alguns chunks de cada documento
         if not results:
@@ -672,24 +796,130 @@ def rebuild_document_index() -> bool:
         return False
 
 # Função para buscar conhecimento relevante
-def get_relevant_knowledge(question: str, max_chunks: int = 5) -> str:
+def get_relevant_knowledge(question: str, max_chunks: int = 5, max_chars: int = 3000, similarity_threshold: float = 0.2) -> str:
     """
     Busca conhecimento relevante nos documentos para responder à pergunta.
     
     Args:
         question: Pergunta do usuário
-        max_chunks: Número máximo de chunks a retornar
+        max_chunks: Número máximo de chunks a serem retornados
+        max_chars: Número máximo de caracteres total
+        similarity_threshold: Limiar mínimo de similaridade (valores menores são mais permissivos)
         
     Returns:
         String contendo o conhecimento relevante
     """
     print(f"\n=== Buscando conhecimento relevante para: '{question}' ===")
     
+    # Normalizar a pergunta (remover acentuação, converter para minúsculas)
+    import unicodedata
+    normalized_question = unicodedata.normalize('NFKD', question.lower())
+    normalized_question = ''.join([c for c in normalized_question if not unicodedata.combining(c)])
+    print(f"Pergunta normalizada: '{normalized_question}'")
+    
+    # Verificar se podemos usar o LangChain
+    if LANGCHAIN_AVAILABLE:
+        try:
+            print("Tentando usar LangChain para busca de conhecimento relevante")
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print("AVISO: OPENAI_API_KEY não está configurada para LangChain")
+                # Fallback para método padrão
+            else:
+                # Verificar documentos disponíveis
+                processor = get_document_processor()
+                document_list = processor.get_document_list()
+                
+                if not document_list:
+                    return "Não foram encontrados documentos na base de conhecimento."
+                
+                # Tentar construir um índice de vetores com FAISS
+                from langchain_community.vectorstores import FAISS  
+                from langchain_core.documents import Document  
+                
+                # Coletar documentos para indexar
+                documents = []
+                for doc_info in document_list:
+                    doc_id = doc_info["id"]
+                    chunks_file = os.path.join(processor.chunks_dir, f"{doc_id}.json")
+                    
+                    if os.path.exists(chunks_file):
+                        with open(chunks_file, 'r', encoding='utf-8') as f:
+                            doc_chunks = json.load(f)
+                            
+                        for chunk in doc_chunks:
+                            # Criar documento LangChain
+                            langchain_doc = Document(
+                                page_content=chunk["text"],
+                                metadata={
+                                    "doc_id": doc_id,
+                                    "chunk_id": chunk["id"],
+                                    "title": doc_info["title"]
+                                }
+                            )
+                            documents.append(langchain_doc)
+                
+                if not documents:
+                    return "Nenhum chunk de documento encontrado."
+                
+                print(f"Criando índice FAISS com {len(documents)} documentos")
+                
+                # Criar embeddings
+                embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+                
+                # Criar vectorstore
+                try:
+                    db = FAISS.from_documents(documents, embeddings)
+                    
+                    # Realizar busca
+                    similar_docs = db.similarity_search_with_score(normalized_question, k=max_chunks)
+                    
+                    # Construir resposta
+                    knowledge = ""
+                    for i, (doc, score) in enumerate(similar_docs):
+                        title = doc.metadata.get("title", "Desconhecido")
+                        chunk_text = doc.page_content
+                        
+                        # Verificar limite de caracteres
+                        if len(knowledge) + len(chunk_text) > max_chars:
+                            # Se o chunk for muito grande, tentar cortar para encaixar no limite
+                            remaining_space = max_chars - len(knowledge)
+                            if remaining_space > 100:  # Se tiver pelo menos 100 caracteres de espaço
+                                chunk_text = chunk_text[:remaining_space] + "..."
+                            else:
+                                break
+                        
+                        knowledge += f"\n--- Início do trecho {i+1} (de {title}, similaridade: {1-score:.4f}) ---\n"
+                        knowledge += chunk_text
+                        knowledge += f"\n--- Fim do trecho {i+1} ---\n"
+                        
+                        # Logging
+                        preview = chunk_text[:100] + "..." if len(chunk_text) > 100 else chunk_text
+                        print(f"LangChain - Chunk {i+1}: {preview}")
+                        print(f"  - Documento: {title}")
+                        print(f"  - Similaridade: {1-score:.4f}")
+                        print(f"  - Tamanho: {len(chunk_text)} caracteres")
+                    
+                    if knowledge:
+                        print(f"LangChain encontrou {len(similar_docs)} chunks relevantes")
+                        return knowledge
+                    else:
+                        return "LangChain não encontrou informações relevantes."
+                except ImportError as e:
+                    print(f"Erro ao usar FAISS: {e}")
+                    print("A biblioteca FAISS não está disponível, usando método padrão")
+                    # Continuar com o método padrão
+        except Exception as e:
+            print(f"Erro ao usar LangChain para busca: {str(e)}")
+            traceback.print_exc()
+            print("Voltando ao método padrão de busca")
+    
+    # Método padrão se LangChain não estiver disponível ou falhar
     # Obter o processador de documentos
     processor = get_document_processor()
     
     # Buscar documentos relevantes
-    relevant_chunks = processor.search_documents(question)
+    relevant_chunks = processor.search_documents(normalized_question)
     
     # Limitar o número de chunks para evitar exceder o contexto do LLM
     if len(relevant_chunks) > max_chunks:
@@ -709,22 +939,33 @@ def get_relevant_knowledge(question: str, max_chunks: int = 5) -> str:
         chunk_text = chunk["text"]
         doc_info = chunk.get("document", {})
         doc_name = doc_info.get("name", "Desconhecido")
+        doc_title = doc_info.get("title", doc_name)
         similarity = chunk.get("similarity", 0)
         
+        # Verificar o limite de caracteres
+        if total_chars + len(chunk_text) > max_chars:
+            # Se o chunk for muito grande, tentar cortar para encaixar no limite
+            remaining_space = max_chars - total_chars
+            if remaining_space > 100:  # Se tiver pelo menos 100 caracteres de espaço
+                chunk_text = chunk_text[:remaining_space] + "..."
+            else:
+                break
+                
         # Adicionar o chunk ao conhecimento
-        knowledge += f"\n--- Início do trecho {i+1} (de {doc_name}) ---\n"
+        knowledge += f"\n--- Início do trecho {i+1} (de {doc_title}) ---\n"
         knowledge += chunk_text
         knowledge += f"\n--- Fim do trecho {i+1} ---\n"
+        
+        # Atualizar contagem de caracteres
+        total_chars += len(chunk_text)
         
         # Logging
         preview = chunk_text[:100] + "..." if len(chunk_text) > 100 else chunk_text
         print(f"Chunk {i+1}: {preview}")
-        print(f"  - Documento: {doc_name}")
+        print(f"  - Documento: {doc_title}")
         print(f"  - Similaridade: {similarity:.4f}")
         print(f"  - Tamanho: {len(chunk_text)} caracteres")
         
-        total_chars += len(chunk_text)
-    
     print(f"\nTotal de caracteres enviados ao LLM: {total_chars}")
     
     if not knowledge:
@@ -747,6 +988,23 @@ def generate_embedding(text: str) -> List[float]:
         print("Texto vazio, retornando embedding vazio")
         return []
     
+    # Verificar se podemos usar o LangChain para embeddings
+    if LANGCHAIN_AVAILABLE:
+        try:
+            print("Usando LangChain para gerar embedding")
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print("AVISO: OPENAI_API_KEY não está configurada")
+                return []
+                
+            embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+            embedding_vector = embeddings.embed_query(text)
+            return embedding_vector
+        except Exception as e:
+            print(f"Erro ao usar LangChain para embedding: {str(e)}")
+            print("Voltando ao método padrão para embeddings")
+    
+    # Método padrão se LangChain não estiver disponível ou falhar
     max_retries = 3
     retry_count = 0
     

@@ -264,17 +264,19 @@ def show_chat_interface():
     """Interface de chat com o usuário"""
     # Exibir mensagens anteriores usando o chat_message nativo do Streamlit
     for msg in st.session_state.messages:
-        role = msg["role"]
-        avatar = "🧑" if role == "user" else "🏛️"
-        with st.chat_message(role, avatar=avatar):
+        with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else None):
             st.write(msg["content"])
     
-    # Área de entrada do usuário usando st.chat_input
-    user_input = st.chat_input("Digite sua mensagem aqui...")
+    # Limitar o histórico de mensagens para evitar exceder limites da API
+    # Manter apenas as últimas 6 mensagens (3 pares de user-assistant)
+    if len(st.session_state.messages) > 6:
+        st.info(f"Histórico limitado para melhor desempenho. {len(st.session_state.messages) - 6} mensagens antigas foram resumidas.")
+        st.session_state.messages = st.session_state.messages[-6:]
     
-    # Processamento da entrada do usuário
+    # Entrada do usuário
+    user_input = st.chat_input("Digite sua mensagem...")
+    
     if user_input:
-        # Adicionar mensagem do usuário
         st.session_state.messages.append({"role": "user", "content": user_input})
         
         # Mostrar a mensagem do usuário
@@ -318,12 +320,13 @@ def show_chat_interface():
                 # Buscar conhecimento relevante dos documentos
                 relevant_knowledge = documents.get_relevant_knowledge(user_input)
                 
+                # Preparar mensagens para a API
                 api_messages = []
                 
-                # Limitar o contexto para as últimas 10 mensagens
-                context_messages = st.session_state.messages[-10:] if len(st.session_state.messages) > 10 else st.session_state.messages
+                # Obtém apenas as últimas 4 mensagens do histórico para reduzir o tamanho da solicitação
+                recent_messages = st.session_state.messages[-4:] if len(st.session_state.messages) > 4 else st.session_state.messages
                 
-                for msg in context_messages:
+                for msg in recent_messages:
                     api_messages.append({
                         "role": msg["role"],
                         "content": msg["content"]
@@ -335,12 +338,7 @@ def show_chat_interface():
                 # Adiciona o conhecimento relevante
                 system_content += relevant_knowledge
                 
-                api_messages.append({"role": "system", "content": system_content})
-                
-                # Adicionar histórico de mensagens
-                for message in st.session_state.messages:
-                    if message["role"] != "system":  # Não incluir mensagens do sistema
-                        api_messages.append({"role": message["role"], "content": message["content"]})
+                api_messages.insert(0, {"role": "system", "content": system_content})
                 
                 # Obter resposta
                 response = get_completion(api_messages, model="gpt-3.5-turbo")
@@ -348,12 +346,14 @@ def show_chat_interface():
                 # Adicionar resposta ao histórico
                 st.session_state.messages.append({"role": "assistant", "content": response})
                 
-                # Mostrar a resposta
-                with st.chat_message("assistant", avatar="🏛️"):
+                # Exibir resposta
+                with st.chat_message("assistant"):
                     st.write(response)
-                    
+            
             except Exception as e:
-                st.error(f"Erro ao consultar o oráculo: {str(e)}")
+                st.error(f"Erro ao processar sua solicitação: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
 
 def show_debug_interface():
     """Interface para depuração e diagnóstico"""
