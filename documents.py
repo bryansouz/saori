@@ -300,6 +300,20 @@ class DocumentProcessor:
         if not os.path.exists(file_path):
             return f"ERRO: Arquivo não encontrado: {file_path}"
         
+        # Verificar se o LangChain está disponível
+        try:
+            from langchain_community.vectorstores import FAISS
+            from langchain_openai import OpenAIEmbeddings
+            from langchain_core.documents import Document
+            LANGCHAIN_AVAILABLE = True
+            print("LangChain está disponível e importado com sucesso!")
+        except ImportError as e:
+            print(f"LangChain não está disponível: {e}")
+            LANGCHAIN_AVAILABLE = False
+        except Exception as e:
+            print(f"Erro ao importar LangChain: {e}")
+            LANGCHAIN_AVAILABLE = False
+        
         # Usar LangChain se disponível
         if LANGCHAIN_AVAILABLE:
             try:
@@ -796,7 +810,7 @@ def rebuild_document_index() -> bool:
         return False
 
 # Função para buscar conhecimento relevante
-def get_relevant_knowledge(question: str, max_chunks: int = 5, max_chars: int = 3000, similarity_threshold: float = 0.2) -> str:
+def get_relevant_knowledge(question: str, max_chunks: int = 10, max_chars: int = 5000, similarity_threshold: float = 0.2) -> str:
     """
     Busca conhecimento relevante nos documentos para responder à pergunta.
     
@@ -871,8 +885,9 @@ def get_relevant_knowledge(question: str, max_chunks: int = 5, max_chars: int = 
                 try:
                     db = FAISS.from_documents(documents, embeddings)
                     
-                    # Realizar busca
-                    similar_docs = db.similarity_search_with_score(normalized_question, k=max_chunks)
+                    # Realizar busca com mais resultados e menor limiar de similaridade
+                    k_search = max_chunks * 2  # Buscar mais resultados para ter mais opções
+                    similar_docs = db.similarity_search_with_score(normalized_question, k=k_search)
                     
                     # Construir resposta
                     knowledge = ""
