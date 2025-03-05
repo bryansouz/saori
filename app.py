@@ -6,7 +6,7 @@ from openai import OpenAI
 import json
 
 # Importar sistema de documentos
-import documents
+from documents import get_document_processor, get_relevant_knowledge, add_document_from_upload, rebuild_document_index
 
 # Importar prompts
 from prompts import SYSTEM_PROMPT, TEST_MODE_PROMPT
@@ -14,7 +14,11 @@ from prompts import SYSTEM_PROMPT, TEST_MODE_PROMPT
 # Log para diagnóstico
 print("Inicializando aplicação...")
 print(f"Python version: {os.sys.version}")
-print(f"OpenAI version: {OpenAI.__version__}")
+try:
+    client = OpenAI()
+    print(f"OpenAI versão 1.x instalada com sucesso!")
+except Exception as e:
+    print(f"Erro ao importar OpenAI: {e}")
 print(f"Streamlit version: {st.__version__}")
 
 # Carregar variáveis de ambiente do arquivo .env
@@ -28,7 +32,7 @@ if "openai_api_key" not in st.session_state:
 
 # Configurar a API key do OpenAI a partir da sessão (será atualizada pela interface se necessário)
 if st.session_state.openai_api_key:
-    openai.api_key = st.session_state.openai_api_key
+    # A API key será passada diretamente ao criar cada cliente OpenAI quando necessário
     print("API key configurada")
 else:
     print("AVISO: API key não encontrada!")
@@ -86,7 +90,6 @@ def main():
                 # Salvar a chave API na sessão
                 st.session_state.openai_api_key = api_key
                 # Atualizar configuração da OpenAI
-                openai.api_key = api_key
                 st.success("✅ Chave API configurada com sucesso!")
                 st.experimental_rerun()
             elif submit:
@@ -114,16 +117,16 @@ def main():
         st.session_state.active_tab = "chat"
     
     # Verificar se a pasta de documentos existe
-    if not os.path.exists(documents.DOCUMENTS_DIR):
-        os.makedirs(documents.DOCUMENTS_DIR)
+    if not os.path.exists("documents"):
+        os.makedirs("documents")
         
     # Verificar se a pasta de chunks existe
-    if not os.path.exists(documents.CHUNKS_DIR):
-        os.makedirs(documents.CHUNKS_DIR)
+    if not os.path.exists("document_chunks"):
+        os.makedirs("document_chunks")
     
     # Inicializar o arquivo de índice se não existir
-    if not os.path.exists(documents.INDEX_FILE):
-        with open(documents.INDEX_FILE, 'w') as f:
+    if not os.path.exists("document_index.json"):
+        with open("document_index.json", 'w') as f:
             f.write('{}')
     
     # Barra lateral para configurações
@@ -142,7 +145,6 @@ def main():
                 
                 if update_key and new_key:
                     st.session_state.openai_api_key = new_key
-                    openai.api_key = new_key
                     st.success("Chave atualizada!")
                     st.experimental_rerun()
         
@@ -183,7 +185,7 @@ def show_documents_interface():
     st.write("Adicione documentos para aumentar o conhecimento de Saori.")
     
     # Inicializar o processador de documentos
-    doc_processor = documents.get_document_processor()
+    doc_processor = get_document_processor()
     
     # Interface para upload de novos documentos
     with st.expander("📤 Adicionar Novo Documento", expanded=True):
@@ -202,7 +204,7 @@ def show_documents_interface():
             
             if st.button("Processar Documento", use_container_width=True):
                 with st.spinner("Processando documento..."):
-                    success, message = documents.add_document_from_upload(
+                    success, message = add_document_from_upload(
                         uploaded_file, doc_title, doc_description
                     )
                     
@@ -299,7 +301,7 @@ def show_chat_interface():
             st.session_state.messages.append({"role": "assistant", "content": "Iniciando reprocessamento de todos os documentos com geração de embeddings. Isso pode levar alguns minutos..."})
             
             try:
-                success, message = documents.reprocess_all_documents()
+                success, message = rebuild_document_index()
                 
                 if success:
                     st.session_state.messages.append({"role": "assistant", "content": "✅ Documentos reprocessados com sucesso! Os embeddings foram gerados para todos os chunks."})
@@ -317,7 +319,7 @@ def show_chat_interface():
         with st.spinner("Consultando banco de dados..."):
             try:
                 # Buscar conhecimento relevante dos documentos
-                relevant_knowledge = documents.get_relevant_knowledge(user_input)
+                relevant_knowledge = get_relevant_knowledge(user_input)
                 
                 # Preparar mensagens para a API
                 api_messages = []
@@ -409,15 +411,13 @@ def show_debug_interface():
         # Verificar estrutura de diretórios
         st.subheader("Estrutura de Diretórios")
         
-        from documents import DOCUMENTS_DIR, CHUNKS_DIR, INDEX_FILE
-        
         directories = [
-            {"path": DOCUMENTS_DIR, "name": "Documentos", "required": True},
-            {"path": CHUNKS_DIR, "name": "Chunks", "required": True}
+            {"path": "documents", "name": "Documentos", "required": True},
+            {"path": "document_chunks", "name": "Chunks", "required": True}
         ]
         
         files = [
-            {"path": INDEX_FILE, "name": "Índice de Documentos", "required": True}
+            {"path": "document_index.json", "name": "Índice de Documentos", "required": True}
         ]
         
         col1, col2 = st.columns(2)
@@ -482,7 +482,7 @@ def show_debug_interface():
                                 })
                 
                 # 2. Verificar arquivo de índice
-                index_exists = os.path.exists(INDEX_FILE)
+                index_exists = os.path.exists("document_index.json")
                 if not index_exists:
                     diag_results.append({
                         "status": "error",
@@ -490,7 +490,7 @@ def show_debug_interface():
                         "action": "Criar um novo arquivo de índice"
                     })
                     try:
-                        with open(INDEX_FILE, 'w', encoding='utf-8') as f:
+                        with open("document_index.json", 'w', encoding='utf-8') as f:
                             json.dump({}, f)
                         diag_results.append({
                             "status": "success",
@@ -504,7 +504,7 @@ def show_debug_interface():
                 else:
                     # Verificar se o arquivo de índice é um JSON válido
                     try:
-                        with open(INDEX_FILE, 'r', encoding='utf-8') as f:
+                        with open("document_index.json", 'r', encoding='utf-8') as f:
                             index = json.load(f)
                         diag_results.append({
                             "status": "success",
@@ -519,12 +519,12 @@ def show_debug_interface():
                 
                 # 3. Verificar consistência entre índice e arquivos
                 try:
-                    doc_processor = documents.get_document_processor()
+                    doc_processor = get_document_processor()
                     doc_list = doc_processor.get_document_list()
                     
                     for doc in doc_list:
                         # Verificar se o arquivo do documento existe
-                        doc_file = os.path.join(DOCUMENTS_DIR, doc.get("filename", ""))
+                        doc_file = os.path.join("documents", doc.get("filename", ""))
                         if not os.path.exists(doc_file):
                             diag_results.append({
                                 "status": "warning",
@@ -533,7 +533,7 @@ def show_debug_interface():
                             })
                         
                         # Verificar se o arquivo de chunks existe
-                        chunks_file = os.path.join(CHUNKS_DIR, f"{doc.get('id')}.json")
+                        chunks_file = os.path.join("document_chunks", f"{doc.get('id')}.json")
                         if not os.path.exists(chunks_file):
                             diag_results.append({
                                 "status": "warning",
@@ -627,8 +627,8 @@ def show_debug_interface():
         st.subheader("Gestão de Documentos")
         
         # Listar documentos no diretório
-        if os.path.exists(documents.DOCUMENTS_DIR):
-            docs = os.listdir(documents.DOCUMENTS_DIR)
+        if os.path.exists("documents"):
+            docs = os.listdir("documents")
             
             st.write(f"**Arquivos no diretório de documentos:** {len(docs)}")
             
@@ -636,13 +636,13 @@ def show_debug_interface():
                 st.info("Nenhum arquivo encontrado")
             else:
                 for doc in docs:
-                    doc_path = os.path.join(documents.DOCUMENTS_DIR, doc)
+                    doc_path = os.path.join("documents", doc)
                     doc_size = os.path.getsize(doc_path)
                     st.write(f"📄 **{doc}** - {doc_size} bytes")
         
         # Listar chunks
-        if os.path.exists(documents.CHUNKS_DIR):
-            chunks = os.listdir(documents.CHUNKS_DIR)
+        if os.path.exists("document_chunks"):
+            chunks = os.listdir("document_chunks")
             
             st.write(f"**Arquivos no diretório de chunks:** {len(chunks)}")
             
@@ -650,7 +650,7 @@ def show_debug_interface():
                 st.info("Nenhum arquivo de chunks encontrado")
             else:
                 for chunk in chunks:
-                    chunk_path = os.path.join(documents.CHUNKS_DIR, chunk)
+                    chunk_path = os.path.join("document_chunks", chunk)
                     chunk_size = os.path.getsize(chunk_path)
                     
                     # Verificar se é um arquivo JSON válido
@@ -670,7 +670,7 @@ def show_debug_interface():
             if st.button("🔄 Reconstruir Índice", use_container_width=True):
                 with st.spinner("Reconstruindo índice..."):
                     try:
-                        if documents.rebuild_document_index():
+                        if rebuild_document_index():
                             st.success("Índice reconstruído com sucesso!")
                             st.experimental_rerun()
                         else:
@@ -684,21 +684,21 @@ def show_debug_interface():
                     with st.spinner("Limpando dados..."):
                         try:
                             # Limpar índice
-                            with open(documents.INDEX_FILE, 'w', encoding='utf-8') as f:
+                            with open("document_index.json", 'w', encoding='utf-8') as f:
                                 json.dump({}, f)
                                 
                             # Limpar diretórios
                             import shutil
-                            for file in os.listdir(documents.DOCUMENTS_DIR):
-                                file_path = os.path.join(documents.DOCUMENTS_DIR, file)
+                            for file in os.listdir("documents"):
+                                file_path = os.path.join("documents", file)
                                 try:
                                     if os.path.isfile(file_path):
                                         os.remove(file_path)
                                 except:
                                     pass
                                     
-                            for file in os.listdir(documents.CHUNKS_DIR):
-                                file_path = os.path.join(documents.CHUNKS_DIR, file)
+                            for file in os.listdir("document_chunks"):
+                                file_path = os.path.join("document_chunks", file)
                                 try:
                                     if os.path.isfile(file_path):
                                         os.remove(file_path)
