@@ -100,16 +100,12 @@ def demo_embeddings_and_search(chunks):
     
     try:
         # Método alternativo de inicialização
-        import openai
-        print(f"Versão do OpenAI: {openai.__version__}")
+        from openai import OpenAI
+        print(f"Versão do OpenAI instalada e compatível com API v1.x")
         
-        if hasattr(openai, "OpenAI"):
-            # Versão mais recente da API (0.28.0+)
-            embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-        else:
-            # Versão anterior da API
-            embeddings = OpenAIEmbeddings(openai_api_key=api_key, client=None)
-            
+        # Versão mais recente da API (1.x)
+        embeddings = OpenAIEmbeddings(openai_api_key=api_key)
+        
         print("Modelo de embeddings inicializado")
         
         # Criar vectorstore
@@ -136,7 +132,7 @@ def demo_embeddings_and_search(chunks):
         print(f"[ERRO] Falha ao inicializar embeddings: {e}")
         print("Esta demonstração mostra apenas a sintaxe, mas não pode executar as consultas sem as dependências corretas.")
         print("Para solucionar este problema, atualize as versões das bibliotecas:")
-        print("pip install openai==0.28.1 langchain==0.0.312 langchain-community==0.0.16 langchain-openai==0.0.2")
+        print("pip install openai==1.0.0 langchain==0.0.312 langchain-community==0.0.16 langchain-openai==0.0.2")
         return None
 
 if __name__ == "__main__":
