@@ -2,7 +2,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from datetime import datetime
-import openai
+from openai import OpenAI
 import json
 
 # Importar sistema de documentos
@@ -14,7 +14,7 @@ from prompts import SYSTEM_PROMPT, TEST_MODE_PROMPT
 # Log para diagnóstico
 print("Inicializando aplicação...")
 print(f"Python version: {os.sys.version}")
-print(f"OpenAI version: {openai.__version__}")
+print(f"OpenAI version: {OpenAI.__version__}")
 print(f"Streamlit version: {st.__version__}")
 
 # Carregar variáveis de ambiente do arquivo .env
@@ -52,19 +52,18 @@ def get_completion(messages, model="gpt-3.5-turbo"):
         Texto da resposta do modelo
     """
     try:
-        # Certificar-se de que a API key está configurada
         if not st.session_state.openai_api_key:
             return "⚠️ API key não configurada! Por favor, configure a chave da API OpenAI."
             
         # Usar a chave API da sessão
-        openai.api_key = st.session_state.openai_api_key
+        client = OpenAI(api_key=st.session_state.openai_api_key)
         
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=0.7,
         )
-        return response.choices[0].message["content"]
+        return response.choices[0].message.content
     except Exception as e:
         return f"Erro ao comunicar com a API OpenAI: {str(e)}"
 
@@ -385,7 +384,8 @@ def show_debug_interface():
         
         # Lista de dependências críticas
         dependencies = [
-            {"name": "OpenAI", "module": "openai", "test": "import openai; print(openai.__version__)"},
+            {"name": "Python", "test": "import sys; print(sys.version)"},
+            {"name": "OpenAI", "module": "openai", "test": "from openai import OpenAI; print('OpenAI instalado')"},
             {"name": "Streamlit", "module": "streamlit", "test": "import streamlit; print(streamlit.__version__)"},
             {"name": "PyMuPDF", "module": "fitz", "test": "import fitz; print(fitz.__version__)"},
             {"name": "python-docx", "module": "docx", "test": "import docx; print(docx.__version__)"},

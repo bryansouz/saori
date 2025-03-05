@@ -999,64 +999,41 @@ def generate_embedding(text: str) -> List[float]:
     Returns:
         Lista de floats representando o embedding ou lista vazia em caso de erro
     """
-    if not text.strip():
-        print("Texto vazio, retornando embedding vazio")
+    if not text or text.strip() == "":
+        print("AVISO: Texto vazio para embedding")
         return []
+        
+    # Limitar o tamanho do texto para a API
+    text = text[:8191]  # Limite para o modelo ada-002
     
-    # Verificar se podemos usar o LangChain para embeddings
-    if LANGCHAIN_AVAILABLE:
-        try:
-            print("Usando LangChain para gerar embedding")
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                print("AVISO: OPENAI_API_KEY não está configurada")
-                return []
-                
-            embeddings = OpenAIEmbeddings(openai_api_key=api_key)
-            embedding_vector = embeddings.embed_query(text)
-            return embedding_vector
-        except Exception as e:
-            print(f"Erro ao usar LangChain para embedding: {str(e)}")
-            print("Voltando ao método padrão para embeddings")
-    
-    # Método padrão se LangChain não estiver disponível ou falhar
     max_retries = 3
     retry_count = 0
     
     while retry_count < max_retries:
         try:
             # Importa openai aqui para não quebrar na importação inicial
-            import openai
             from openai import OpenAI
             
-            # Tenta usar a nova sintaxe primeiro
-            try:
-                # Verificar se a chave API está configurada
-                api_key = os.getenv("OPENAI_API_KEY")
-                if not api_key:
-                    print("AVISO: OPENAI_API_KEY não está configurada")
-                    return []
-                
-                client = OpenAI(api_key=api_key)
-                response = client.embeddings.create(
-                    input=text,
-                    model="text-embedding-ada-002"
-                )
-                return response.data[0].embedding
-            except (AttributeError, ImportError):
-                # Fallback para a sintaxe antiga
-                response = openai.Embedding.create(
-                    input=text,
-                    model="text-embedding-ada-002"
-                )
-                return response["data"][0]["embedding"]
+            # Verificar se a chave API está configurada
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                print("AVISO: OPENAI_API_KEY não está configurada")
+                return []
+            
+            client = OpenAI(api_key=api_key)
+            response = client.embeddings.create(
+                input=text,
+                model="text-embedding-ada-002"
+            )
+            return response.data[0].embedding
+            
         except Exception as e:
             retry_count += 1
             print(f"Erro ao gerar embedding (tentativa {retry_count}/{max_retries}): {str(e)}")
             import time
-            time.sleep(1)  # Esperar um pouco antes de tentar novamente
+            time.sleep(2)  # Espera 2 segundos antes de tentar novamente
     
-    print("Falha em todas as tentativas de gerar embedding. Retornando lista vazia.")
+    print("ERRO: Falha ao gerar embedding após todas as tentativas")
     return []
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
